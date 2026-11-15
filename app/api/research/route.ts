@@ -36,8 +36,9 @@ export async function GET(req: Request) {
 
   try {
     const r = await research(symbol);
-    mem.set(symbol, { at: Date.now(), body: r });
+    // Only cache complete analyses — a transient model/key failure should retry next time.
     if (!r.error) {
+      mem.set(symbol, { at: Date.now(), body: r });
       await mkdir("/tmp", { recursive: true }).catch(() => {});
       await writeFile(path.join("/tmp", `finn-${symbol}.json`), JSON.stringify(r)).catch(() => {});
     }
