@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Ship precomputed research snapshots with the API function.
+  outputFileTracingIncludes: { "/api/research": ["./data/research/**/*"] },
 };
 
 export default nextConfig;

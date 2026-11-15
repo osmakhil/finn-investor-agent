@@ -59,7 +59,7 @@ export function computeAlerts(cos: BriefCompany[], s: AlertSettings, days = 10):
       if (!s.cats.includes(f.cat) || f.score < s.minScore) continue;
       out.push({
         symbol: c.symbol, name: c.name, date: f.date.slice(0, 10), kind: "filing", value: f.score,
-        closes: p.slice(-30).map((x) => x.c), headline: f.category, detail: f.why || f.summary, url: f.url,
+        closes: p.slice(-30).map((x) => x.c), headline: f.category, detail: f.summary || f.why || "", url: f.url,
       });
     }
   }

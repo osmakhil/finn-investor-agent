@@ -111,7 +111,7 @@ export default function Brief({ data }: { data: BriefT }) {
                   <Tag>{LABEL[f.cat]}</Tag>
                   <span className="ml-auto text-mute">{ago(f.date, now)}</span>
                 </div>
-                <p className="mt-1 text-[13.5px] leading-snug text-sub">{f.why || f.summary || f.category}</p>
+                <p className="mt-1 text-[13.5px] leading-snug text-sub">{f.summary || f.why || f.category}</p>
               </a>
             ))}
           </div>
@@ -167,7 +167,7 @@ function StoryCard({ items, now }: { items: Item[]; now: number }) {
         </div>
       </div>
 
-      <p className="mt-3 text-[14.5px] leading-snug">{f.why || f.summary || f.category}</p>
+      <p className="mt-3 text-[14.5px] leading-snug">{f.summary || f.why || f.category}</p>
 
       {f.results && <ResultsTable h={f.results} />}
 
@@ -184,7 +184,7 @@ function StoryCard({ items, now }: { items: Item[]; now: number }) {
           {items.slice(1).map(({ f: g }) => (
             <li key={g.url} className="flex gap-2 text-[12.5px] text-sub">
               <Tag>{LABEL[g.cat]}</Tag>
-              <a href={g.url} target="_blank" rel="noreferrer" className="line-clamp-2">{g.why || g.summary || g.category}</a>
+              <a href={g.url} target="_blank" rel="noreferrer" className="line-clamp-2">{g.summary || g.why || g.category}</a>
             </li>
           ))}
         </ul>

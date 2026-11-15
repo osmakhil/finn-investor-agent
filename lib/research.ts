@@ -2,6 +2,7 @@ import { extractText } from "unpdf";
 import { getCompany, row, type Company, type Table } from "./screener";
 import { headline, type Headline } from "./metrics";
 import { chatJSON, MODELS, hasLLM, usage } from "./llm";
+import { fetchPdf } from "./resultsPdf";
 
 export type Claim = { metric: string; promise: string; target: string; period: string; quote: string };
 export type LedgerItem = {
@@ -110,11 +111,21 @@ export function guidanceSnippets(text: string, maxChars = 4500): string {
 }
 
 async function pdfText(url: string): Promise<string> {
-  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; FINN-prototype/0.1)" } });
-  if (!res.ok) throw new Error(`pdf ${res.status}`);
-  const buf = new Uint8Array(await res.arrayBuffer());
+  const buf = await fetchPdf(url);
+  if (!buf) throw new Error("pdf fetch failed");
   const { text } = await extractText(buf, { mergePages: true });
   return text as string;
+}
+
+/** "Sep 2026" -> "Sep 2026 (Q2 FY27)"; "Mar 2026" annual -> "Mar 2026 (FY26)". Removes quarter-mapping errors. */
+function fyLabel(h: string): string {
+  const m = h.match(/^(\w{3}) (\d{4})$/);
+  if (!m) return h;
+  const y = +m[2];
+  const q = { Jun: 1, Sep: 2, Dec: 3, Mar: 4 }[m[1]];
+  if (!q) return h;
+  const fy = (m[1] === "Mar" ? y : y + 1) % 100;
+  return `${h} (Q${q} FY${String(fy).padStart(2, "0")})`;
 }
 
 function tableSlice(t: Table, n: number, labels: [string, string[]][]) {
@@ -124,7 +135,7 @@ function tableSlice(t: Table, n: number, labels: [string, string[]][]) {
     const r = row(t, ...ls).slice(off, off + periods.length);
     return `${name}: ${r.map((v) => (v == null ? "na" : v)).join(" | ")}`;
   });
-  return `Periods: ${periods.join(" | ")}\n${lines.join("\n")}`;
+  return `Periods: ${periods.map(fyLabel).join(" | ")}\n${lines.join("\n")}`;
 }
 
 export async function research(symbol: string): Promise<Research> {
@@ -190,17 +201,17 @@ export async function research(symbol: string): Promise<Research> {
       if (!snippets) continue;
       const out = await chatJSON<{ claims: Claim[] }>(
         MODELS.fast,
-        `You extract MANAGEMENT GUIDANCE from an Indian company's earnings-call transcript excerpts. Only include explicit, forward-looking statements by management with a number or clear direction (growth %, margin band, capex amount, volume, timeline). Ignore analyst questions and past results. Max 6, most material first. metric is one of: revenue_growth, margin, profit, capex, volume, debt, other. Return {"claims":[{"metric":"","promise":"<=15 words, plain English","target":"e.g. 15-18% or ₹2,000 Cr","period":"e.g. FY27 or next 2 quarters","quote":"verbatim <=25 words"}]}`,
+        `You extract MANAGEMENT GUIDANCE from an Indian company's earnings-call transcript excerpts. Only include explicit FORWARD-LOOKING statements by management about a FUTURE period, with a number or clear direction (growth %, margin band, capex amount, volume, timeline). Exclude: analyst questions, statements of past/current results, ESG/sustainability goals, dividend/payout facts. Max 6, most material first. metric is one of: revenue_growth, margin, profit, capex, volume, debt, other. Return {"claims":[{"metric":"","promise":"<=15 words, plain English","target":"e.g. 15-18% or ₹2,000 Cr","period":"e.g. FY27 or next 2 quarters","quote":"verbatim <=25 words"}]}`,
         `Call: ${calls[i].month}\n${snippets}`,
-        900,
-      ).catch(() => ({ claims: [] as Claim[] }));
+        2500,
+      ).catch((e) => (console.warn("extract failed", e.message), { claims: [] as Claim[] }));
       claimsByCall.push({ call: calls[i].month, claims: (out.claims || []).slice(0, 6) });
     }
 
     // 2) Strong model, once: judge promises against reported numbers + write the bull/bear.
     const numbers = [
       "QUARTERLY (₹ Cr)",
-      tableSlice(q, 8, [["Revenue", ["Sales", "Revenue"]], ["YoY revenue growth %", ["YoY Sales growth", "YoY Revenue growth"]], ["EBITDA", ["Operating Profit", "Financing Profit"]], ["EBITDA margin %", ["OPM %", "Financing Margin %"]], ["PAT", ["Net Profit"]]]),
+      tableSlice(q, 8, [["Revenue", ["Sales", "Revenue"]], ["YoY revenue growth %", ["YoY Sales growth", "YoY Revenue growth"]], ["EBITDA", ["Operating Profit", "Financing Profit"]], ["EBITDA margin %", ["OPM %", "Financing Margin %"]], ["PBT", ["Profit before tax"]], ["PAT", ["Net Profit"]]]),
       "ANNUAL (₹ Cr)",
       tableSlice(c.annual, 4, [["Revenue", ["Sales", "Revenue"]], ["EBITDA margin %", ["OPM %", "Financing Margin %"]], ["PAT", ["Net Profit"]]]),
       "CASH FLOW (₹ Cr)",
@@ -212,16 +223,21 @@ export async function research(symbol: string): Promise<Research> {
       MODELS.reason,
       `You are a sceptical buy-side analyst. Use ONLY the data given (management's own statements from earnings calls + reported financials). Never use outside knowledge of the company.
 Task: for each promise, compare with what the reported numbers show and give a verdict:
-- delivered: numbers meet/beat it; partly: direction right, magnitude short; missed: clearly not met; pending: target period not yet reported; unverifiable: the financials given can't test it (e.g. segment KPI).
+- delivered: numbers meet/beat it; partly: direction right, magnitude short; missed: the target period has ended (or is clearly unreachable) and it was not met; pending: target period still running — say in "actual" how it is tracking so far (e.g. "tracking 16% in H1 vs 18-20%"); unverifiable: the financials given can't test it (volumes, gross margin, segment KPIs, capacity).
+Only compare like with like: EBITDA margin targets vs EBITDA margin, revenue growth vs revenue growth. Never use EBITDA margin to judge gross margin.
 Dedupe repeated promises across calls (keep earliest call, note if it was reiterated or quietly changed — "moved goalposts" is important). Max 8 items, most material first. actual and evidence must cite specific numbers from the data (quarter + value).
-Also: scorecard = one blunt sentence on management's credibility; business = 2 sentences on what the company does, from the transcript opening; bull and bear = 3 bullets each, <=18 words, grounded in the data.
+Every number you write must appear in REPORTED NUMBERS or in a promise quote; never invent or recompute figures. Quarters are labelled by calendar month-end (Sep 2026 = Q2 FY27, Jun 2026 = Q1 FY27, Mar 2026 = Q4 FY26, Dec 2025 = Q3 FY26).
+Also: scorecard = one blunt sentence on management's credibility that MUST be consistent with your verdicts (if few are testable, say so and say how the testable ones are tracking; never claim a pattern the verdicts don't show); business = 2 sentences on what the company does, from the transcript opening; bull and bear = 3 bullets each, <=18 words, each citing a specific number from REPORTED NUMBERS.
 Return JSON {"ledger":[{"call":"","metric":"","promise":"","target":"","actual":"","verdict":"","evidence":"","quote":""}],"scorecard":"","business":"","bull":[],"bear":[]}`,
       `COMPANY: ${c.name} (${c.basis})\n\nPROMISES\n${claims}\n\nREPORTED NUMBERS\n${numbers}\n\nTRANSCRIPT OPENING (for business description)\n${opening.slice(0, 2500)}`,
-      3500,
+      8000,
+      "medium",
     ).catch((e) => {
       r.error = `Analysis step failed: ${(e as Error).message?.slice(0, 120)}`;
       return null;
     });
+    const rank = { missed: 0, partly: 1, delivered: 2, pending: 3, unverifiable: 4 } as Record<string, number>;
+    if (out?.ledger) out.ledger.sort((a, b) => (rank[a.verdict] ?? 5) - (rank[b.verdict] ?? 5));
     if (out) Object.assign(r, { ledger: out.ledger ?? [], scorecard: out.scorecard ?? "", business: out.business ?? "", bull: out.bull ?? [], bear: out.bear ?? [] });
   }
   r.cost = { calls: usage.calls - u0.calls, inTokens: usage.inTokens - u0.inTokens, outTokens: usage.outTokens - u0.outTokens, ms: Date.now() - t0 };

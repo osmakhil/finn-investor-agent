@@ -4,7 +4,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import YahooFinance from "yahoo-finance2";
 import { getCompany } from "../lib/screener.ts";
 import { PORTFOLIO } from "../lib/portfolio.ts";
-import { ruleClassify, score, type Category } from "../lib/classify.ts";
+import { ruleClassify, score, BASE_SCORE, type Category } from "../lib/classify.ts";
 import { headline } from "../lib/metrics.ts";
 import { expectedQuarter, headlineFromFiling } from "../lib/resultsPdf.ts";
 import { chatJSON, chat, MODELS, hasLLM, usage } from "../lib/llm.ts";
@@ -47,6 +47,16 @@ for (const { symbol, sector } of PORTFOLIO) {
 }
 
 if (hasLLM()) {
+  // 0) Results whose quarter isn't in standardised data yet: read the filing PDF itself.
+  for (const co of companies) {
+    for (const f of co.filings) {
+      if (!f.results?.pendingQuarter) continue;
+      const key = `res:${f.url}`;
+      if (!cache[key]) cache[key] = await headlineFromFiling(f.url, f.results.pendingQuarter).catch((e) => (console.warn("results pdf", co.symbol, e.message), null));
+      console.log(`results from filing ${co.symbol}: ${cache[key] ? "ok" : "failed"}`);
+      if (cache[key]) f.results = cache[key] as BriefFiling["results"];
+    }
+  }
   // 1) One batched call for every filing the rules couldn't place.
   const todo = ambiguous.filter(({ c, f }) => !cache[companies[c].filings[f].url]);
   if (todo.length) {
@@ -55,8 +65,8 @@ if (hasLLM()) {
       MODELS.fast,
       `Classify Indian stock-exchange filings for a portfolio investor. Categories: results, M&A, fund_raise, management_change, litigation, insider_trading, earnings_call, investor_meetings, credit_rating, dividend, bonus_split, capex, press_release, postal_ballot, agm_egm, pledging, unclassified (routine paperwork). score = 0-100 materiality to the share price. why = max 14 words on why an investor should care, or "" if routine. Return {"items":[{"i":0,"cat":"...","score":0,"why":"..."}]}.`,
       list,
-      2000,
-    );
+      4000,
+    ).catch((e) => (console.warn("classify failed", e.message), { items: [] }));
     for (const it of out.items ?? []) {
       const t = todo[it.i];
       if (t) cache[companies[t.c].filings[t.f].url] = it;
@@ -64,7 +74,11 @@ if (hasLLM()) {
   }
   for (const { c, f } of ambiguous) {
     const hit = cache[companies[c].filings[f].url] as { cat: Category; score: number; why: string } | undefined;
-    if (hit) Object.assign(companies[c].filings[f], { cat: hit.cat, score: hit.score, why: hit.why });
+    // Blend the model's materiality with our category prior so one noisy guess can't top the feed.
+    if (hit && BASE_SCORE[hit.cat] != null) {
+      const fl = companies[c].filings[f];
+      Object.assign(fl, { cat: hit.cat, score: Math.round((hit.score + score(hit.cat, `${fl.category} ${fl.summary}`)) / 2), why: hit.why });
+    }
   }
 
   // 2) Management changes at the top: who is the incoming person? (web-search model)
@@ -77,30 +91,20 @@ if (hasLLM()) {
           MODELS.fast,
           `From an Indian company filing summary, extract the person whose change is announced. Return {"name":"","role":"","incoming":true|false}. incoming=false for resignations/retirements.`,
           `${co.name}: ${f.summary}`,
-          200,
-        );
+          600,
+        ).catch(() => ({ name: "", role: "", incoming: false }));
         let bio = "";
         if (who.name) {
           bio = await chat(
             MODELS.search,
             "You write 2-sentence professional bios for investors. Facts only: current/previous roles, employers, years, education if notable. No fluff. If unsure who this is, say so.",
             `Professional background of ${who.name}, ${who.role} at ${co.name} (India).`,
-            false,
-            300,
+            { search: true, maxTokens: 1500 },
           ).catch(() => "");
         }
         cache[key] = { ...who, bio };
       }
       f.person = cache[key] as BriefFiling["person"];
-    }
-  }
-  // 3) Results whose quarter isn't in standardised data yet: read the filing PDF itself.
-  for (const co of companies) {
-    for (const f of co.filings) {
-      if (!f.results?.pendingQuarter) continue;
-      const key = `res:${f.url}`;
-      if (!(key in cache)) cache[key] = await headlineFromFiling(f.url, f.results.pendingQuarter).catch(() => null);
-      if (cache[key]) f.results = cache[key] as BriefFiling["results"];
     }
   }
   mkdirSync("data", { recursive: true });
