@@ -1,0 +1,6 @@
+import ResearchView from "@/components/ResearchView";
+
+export default async function Page({ params }: { params: Promise<{ symbol: string }> }) {
+  const { symbol } = await params;
+  return <ResearchView symbol={decodeURIComponent(symbol).toUpperCase()} />;
+}

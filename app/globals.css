@@ -1,26 +1,40 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0b0d10;
+  --card: #13161b;
+  --card2: #1a1e25;
+  --line: #242a33;
+  --ink: #e8eaed;
+  --sub: #9aa3ae;
+  --mute: #5d6672;
+  --up: #3ecf8e;
+  --down: #f2555a;
+  --warn: #f5b84b;
+  --accent: #7aa2ff;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-bg: var(--bg);
+  --color-card: var(--card);
+  --color-card2: var(--card2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-sub: var(--sub);
+  --color-mute: var(--mute);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-warn: var(--warn);
+  --color-accent: var(--accent);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-}
+html, body { background: var(--bg); color: var(--ink); }
+body { font-family: var(--font-sans), system-ui, sans-serif; -webkit-tap-highlight-color: transparent; }
+.num { font-family: var(--font-mono), ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+input[type="range"] { accent-color: var(--accent); }

@@ -1,0 +1,21 @@
+name: Refresh brief snapshot
+on:
+  schedule:
+    - cron: "30 13 * * 1-5" # 19:00 IST, after market close and the evening filing rush
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx tsx scripts/build-brief.mts
+        env: { GROQ_API_KEY: "${{ secrets.GROQ_API_KEY }}" }
+      - run: |
+          git config user.name "finn-bot"
+          git config user.email "finn-bot@users.noreply.github.com"
+          git add data && git commit -m "Refresh brief snapshot" && git push || echo "no changes"
